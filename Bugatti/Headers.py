@@ -4,6 +4,7 @@ import glob
 import pandas as pd
 from rapidfuzz import process
 from fuzzywuzzy import process
+from team_config import TEAM_MEMBER, PATHS
 
 # Add the project root directory to the Python path
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -12,7 +13,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # Import team configuration
-from team_config import TEAM_MEMBER, PATHS
+
 
 # Use the paths from configuration
 source_folder = PATHS["pet_forms"]

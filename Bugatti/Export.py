@@ -1,6 +1,7 @@
 import os
 import glob
 import pandas as pd
+import re
 from Headers import load_and_clean_excel, column_mapping_df
 from dateutil import parser
 from datetime import datetime
@@ -117,58 +118,73 @@ def map_all_promo_metadata(model_code, support_input):
         return "N/A", "Model", "N/A", "N/A"
 
 def parse_and_correct_date(val, is_start=True, start_reference=None):
-    if pd.isna(val) or str(val).strip().upper().startswith('NA'):
-        return 'NA'
+    if not val or str(val).strip().upper().startswith("NA"):
+        return "NA"
 
     val_str = str(val).strip()
     today = datetime.today()
 
-    # Try parsing with both formats
+    # Remove all non-digit characters for strict formats
+    numeric_val = re.sub(r"\D", "", val_str)
+
     try:
-        parsed_dayfirst = parser.parse(val_str, dayfirst=True, yearfirst=False)
-        parsed_monthfirst = parser.parse(val_str, dayfirst=False, yearfirst=False)
+        # Try strict format first: YYYYMMDD
+        if len(numeric_val) == 8 and numeric_val[:4].isdigit():
+            year = int(numeric_val[:4])
+            month = int(numeric_val[4:6])
+            day = int(numeric_val[6:])
+            return f"{year:04d}{month:02d}{day:02d}"
 
-        # Decide which one makes more logical sense
-        def date_score(dt):
-            if dt.year < 2000 or dt.year > today.year + 10:  # unrealistic
-                return -100
-            if dt < today.replace(year=today.year - 5):  # too far in the past
-                return -50
-            if dt < today:
-                return -10
-            if abs((dt - today).days) <= 180:
-                return 10
-            return 0  # acceptable future
-
-        score_dayfirst = date_score(parsed_dayfirst)
-        score_monthfirst = date_score(parsed_monthfirst)
-
-        # Select the better candidate
-        parsed = parsed_dayfirst if score_dayfirst >= score_monthfirst else parsed_monthfirst
-
-        # Validate calendar logic: (e.g., prevent 31/02 etc.)
+        # Try dayfirst and monthfirst parsing
         try:
-            parsed.strftime('%Y%m%d')  # triggers ValueError for invalid calendar dates
-        except ValueError:
-            return 'NA'
+            parsed_dayfirst = parser.parse(val_str, dayfirst=True)
+        except Exception:
+            parsed_dayfirst = None
 
-    except Exception:
-        return 'NA'
+        try:
+            parsed_monthfirst = parser.parse(val_str, dayfirst=False)
+        except Exception:
+            parsed_monthfirst = None
 
-    # Final rules for start and end dates
-    if is_start:
-        if parsed < today:
+        # If only one worked, return it
+        if parsed_dayfirst and not parsed_monthfirst:
+            parsed = parsed_dayfirst
+        elif parsed_monthfirst and not parsed_dayfirst:
+            parsed = parsed_monthfirst
+        elif parsed_dayfirst and parsed_monthfirst:
+            # Both worked, choose based on context
+            if is_start:
+                # Prefer start date that is today or in future
+                diff_day = (parsed_dayfirst - today).days
+                diff_month = (parsed_monthfirst - today).days
+                parsed = parsed_dayfirst if 0 <= diff_day <= diff_month else parsed_monthfirst
+            else:
+                if start_reference:
+                    try:
+                        start_dt = datetime.strptime(start_reference, "%Y%m%d")
+                        # Pick whichever is closer but still after start
+                        options = []
+                        for dt in [parsed_dayfirst, parsed_monthfirst]:
+                            if dt >= start_dt:
+                                days_diff = (dt - start_dt).days
+                                if days_diff <= 180:  # max 6 months later
+                                    options.append((dt, days_diff))
+                        if options:
+                            parsed = min(options, key=lambda x: x[1])[0]
+                        else:
+                            parsed = parsed_dayfirst  # fallback
+                    except:
+                        parsed = parsed_dayfirst
+                else:
+                    parsed = parsed_dayfirst
+        else:
+            return "NA"
+        if is_start and parsed < today:
             parsed = today
-    else:
-        if start_reference:
-            try:
-                start_dt = datetime.strptime(start_reference, '%Y%m%d')
-                if parsed < start_dt:
-                    parsed = start_dt
-            except:
-                return 'NA'
+        return parsed.strftime("%Y%m%d")
 
-    return parsed.strftime('%Y%m%d')
+    except Exception as e:
+        return "NA"
 
 
 def safe_round_expected_sell_out(x):
@@ -295,24 +311,29 @@ else:
                 else:
                     extracted_df[col] = placeholder_value
 
-        # ✅ Step 2.2: Handle missing Type of Support
+            # ✅ Step 2.2: Handle missing Type of Support
         if 'Type of Support' not in extracted_df.columns:
             # If column doesn't exist at all, create it
             extracted_df['Type of Support'] = 'A SOA'
             print("📝 Added missing 'Type of Support' column with default 'A SOA' value")
         else:
+            # First convert to string to ensure consistent handling
+            extracted_df['Type of Support'] = extracted_df['Type of Support'].astype(str)
+            
             # Fix missing/NA values in Type of Support
             extracted_df['Type of Support'] = extracted_df['Type of Support'].fillna('A SOA')
             
-            # Find rows with placeholder values like NA, empty string, etc.
+            # Find rows with placeholder values like NA, empty string, numbers only, etc.
             missing_mask = (
-                (extracted_df['Type of Support'].astype(str).str.strip() == '') | 
-                (extracted_df['Type of Support'].astype(str).str.upper().isin(['NA', 'N/A', 'NONE', '-', 'NULL']))
+                (extracted_df['Type of Support'].str.strip() == '') | 
+                (extracted_df['Type of Support'].str.upper().isin(['NA', 'N/A', 'NONE', '-', 'NULL'])) |
+                (extracted_df['Type of Support'].str.isnumeric()) |  # Added check for numeric values
+                (extracted_df['Type of Support'].str.replace('.', '', regex=False).str.isnumeric())  # For decimals
             )
             
             if missing_mask.sum() > 0:
                 extracted_df.loc[missing_mask, 'Type of Support'] = 'A SOA'
-                print(f"📝 Set 'A SOA' for {missing_mask.sum()} rows with missing Type of Support")
+                print(f"📝 Set 'A SOA' for {missing_mask.sum()} rows with missing or numeric Type of Support")
 
         # Step 2.3: Auto-fix swapped Customer Name & Customer Code if needed
         mask_swapped = extracted_df.apply(
@@ -330,9 +351,12 @@ else:
             lambda row: parse_and_correct_date(row['End Date'], is_start=False, start_reference=row['Start Date']),
             axis=1
         )
-        # ✅ Step 4: Drop invalid rows
-        extracted_df = extracted_df.dropna(subset=['Model Code', 'Additional SOA', 'Start Date', 'End Date'])
-        extracted_df = extracted_df[extracted_df.notna().sum(axis=1) >= 3]
+        # ✅ Step 3: Normalize Dates
+        extracted_df['Start Date'] = extracted_df['Start Date'].apply(lambda x: parse_and_correct_date(x, is_start=True))
+        extracted_df['End Date'] = extracted_df.apply(
+            lambda row: parse_and_correct_date(row['End Date'], is_start=False, start_reference=row['Start Date']),
+            axis=1
+        )
 
         # ✅ Step 5: Convert Expected Sell-Out to numeric and round
         extracted_df['Expected Sell-Out'] = pd.to_numeric(extracted_df['Expected Sell-Out'], errors='coerce').fillna(0)
