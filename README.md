@@ -1,6 +1,7 @@
 # PET Form Processor (Finished)
 
 This project provides a streamlined solution for automating the validation, transformation, and metadata enrichment of PET Form Excel files submitted by Key Account Managers (KAMs). The system prepares the data for structured mass upload and ensures consistency in promotional inputs across teams.
+**Disclaimer:** This project is a simplified and sanitized version of an internal automation tool developed for demonstration and educational purposes only.
 
 ---
 
