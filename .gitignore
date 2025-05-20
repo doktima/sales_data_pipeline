@@ -1,0 +1,24 @@
+# Ignore all Excel files
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+
+# Ignore all data folders that might contain sensitive information
+**/PetForms/
+**/Uploads/
+
+# Ignore team member folders with personal data
+Team Members/
+
+# Ignore environment folders
+Environment/
+team_env/
+team_packages/
+__pycache__/
+*.pyc
+
+# Ignore any configuration files that might contain sensitive information
+config.ini
+secrets.json
+.env
